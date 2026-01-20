@@ -175,6 +175,7 @@
   Type(wrf_var_mp10)             :: mp10
   Type(wrf_var_mp20)             :: mp20
   Type(wrf_var_mp30)             :: mp30 !added by oue 2017/07/17 for ICON
+  Type(wrf_var_mp38)             :: mp38 !added by Cha 2025/08/20 for MP38
   Type(wrf_var_mp40)             :: mp40 !added by oue 2017/07/21 for RAMS
   Type(wrf_var_mp50)             :: mp50 ! added by DW 2017/10/30 for P3
   Type(wrf_var_mp70)             :: mp70 ! added by oue for SAM warm bin
@@ -184,6 +185,7 @@
   Type(env_var)                  :: env 
   Type(hydro_var)                :: hydro
   Type(hydro20_var)              :: hydro20
+  Type(hydro38_var)              :: hydro38 ! added by TYC 2025 Oct for MP38
   Type(hydro50_var)              :: hydro50 ! added by DW 2017/10/30 for P3
   Type(hydro70_var)              :: hydro70 ! added by oue for SAM warm bin
   !
@@ -634,6 +636,54 @@
     endif
     !!!-- added by oue
     !---------------------------------------------------------------------------------
+
+    ! conf%MP_PHYSICS==38
+    if (conf%MP_PHYSICS==38) then ! Thompson 2-moment scheme developed by Jensen et al 2023, Added by Cha 2025/08/20
+      WRFmpInputFile=conf%WRFInputFile
+      mp38%nx=nx
+      mp38%ny=ny
+      mp38%nz=nz
+      mp38%nt=nt
+      !
+      call allocate_wrf_var_mp38(mp38)
+      call initialize_wrf_var_mp38(mp38)
+      call ReadInpWRF_MP_PHYSICS_38(Trim(WRFmpInputFile),mp38,status)
+      !
+      hydro38%nx=env%nx
+      hydro38%ny=env%ny
+      hydro38%nz=env%nz
+      hydro38%nht=nsc  
+      !----------------------------------------
+      call allocate_hydro_var(hydro38)
+      !from wrf_var_mod.f90
+      call initialize_hydro_var(hydro38)
+      !
+      call get_hydro38_vars(conf,mp38,hydro38)
+      call deallocate_wrf_var_mp38(mp38)
+      !
+      write(*,*) '--------------------------------------'
+      write(*,*) '---mix ratio--------------------------'
+      write(*,*) 'cloud',minval(hydro38%qhydro(:,:,:,1)),maxval(hydro38%qhydro(:,:,:,1))
+      write(*,*) 'rain ',minval(hydro38%qhydro(:,:,:,2)),maxval(hydro38%qhydro(:,:,:,2))
+      write(*,*) 'ice  ',minval(hydro38%qhydro(:,:,:,3)),maxval(hydro38%qhydro(:,:,:,3))
+      write(*,*) 'snow ',minval(hydro38%qhydro(:,:,:,4)),maxval(hydro38%qhydro(:,:,:,4))
+      write(*,*) 'graup',minval(hydro38%qhydro(:,:,:,5)),maxval(hydro38%qhydro(:,:,:,5))
+      write(*,*) '--------------------------------------'
+
+      write(*,*) '---concentration-----------------------'
+      write(*,*) 'rain ',minval(hydro38%qnhydro(:,:,:,2)),maxval(hydro38%qnhydro(:,:,:,2))
+      write(*,*) 'ice  ',minval(hydro38%qnhydro(:,:,:,3)),maxval(hydro38%qnhydro(:,:,:,3))
+      write(*,*) 'snow ',minval(hydro38%qnhydro(:,:,:,4)),maxval(hydro%qnhydro(:,:,:,4))
+      write(*,*) 'graup',minval(hydro38%qnhydro(:,:,:,5)),maxval(hydro38%qnhydro(:,:,:,5))
+      
+      write(*,*) '--------------------------------------'
+      write(*,*) '--------------------------------------'
+      write(*,*) '---for graupel------------------------'
+      write(*,*) 'qvgraup',minval(hydro38%qvgraup(:,:,:)),maxval(hydro38%qvgraup(:,:,:))
+      write(*,*) '--------------------------------------'
+      
+    endif
+    !!! -- added by Cha 2025/08/20
     !------------------------------------------------------------------------------------------
     !!! Added by oue, 2017/07/21 for RAMS
     ! conf%MP_PHYSICS==40
@@ -1046,7 +1096,7 @@
     !
     !-----------------------------------------
     if ( (conf%MP_PHYSICS==9) .or. &
-         (conf%MP_PHYSICS==10) .or. (conf%MP_PHYSICS==8) .or. &
+         (conf%MP_PHYSICS==10) .or. (conf%MP_PHYSICS==8) .or. (conf%MP_PHYSICS==38) .or. & ! added by Cha 2025/08/20, MP38
          (conf%MP_PHYSICS==30) .or. (conf%MP_PHYSICS==40).or. & ! modified by oue 2016/09/19, 2017/07/17 ICON, RAMS
          (conf%MP_PHYSICS==75) .or. (conf%MP_PHYSICS==80)) then ! modified by oue 2018/06 SAM, Apr 2020 for CM1
       rmout%nx=hydro%nx
@@ -1250,6 +1300,7 @@
               if (conf%MP_PHYSICS==20) qq=scatt_type(iht)%qq(ix,iy,iz)
               if (conf%MP_PHYSICS== 8) qq=hydro%qhydro(ix,iy,iz,iht) !Added by oue 2016/09/19
               if (conf%MP_PHYSICS==30) qq=hydro%qhydro(ix,iy,iz,iht) !Added by oue 2017/07/17 ICON
+              if (conf%MP_PHYSICS==38) qq=hydro%qhydro(ix,iy,iz,iht) !Added by Cha 2025/08/20 MP38
               if (conf%MP_PHYSICS==40) qq=hydro%qhydro(ix,iy,iz,iht) !Added by oue 2017/07/21 RAMS
               if (conf%MP_PHYSICS==50) qq=hydro50%qhydro(ix,iy,iz,iht) ! P3 
               if (conf%MP_PHYSICS==70) qq=scatt_type(iht)%qq(ix,iy,iz) ! for SAM warm bin
@@ -1498,7 +1549,7 @@
               !
               if ((conf%MP_PHYSICS==9 ).or.(conf%MP_PHYSICS==10).or.(conf%MP_PHYSICS==8) .or.&
                   (conf%MP_PHYSICS==30).or.(conf%MP_PHYSICS==40).or.(conf%MP_PHYSICS==75) .or.&
-                  (conf%MP_PHYSICS==80)) then !Modified by oue 2016/09/19, 2017/07/17, 2018/06/17 ICON,RAMS,SAM, Apr 2020 CM1
+                  (conf%MP_PHYSICS==80).or.(conf%MP_PHYSICS==38)) then !Modified by oue 2016/09/19, 2017/07/17, 2018/06/17 ICON,RAMS,SAM, Apr 2020 CM1 !Added by Cha 2025/08/20 MP38
                 qsum=Sum(hydro%qhydro(ix,iy,iz,1:nsc))  
               elseif (conf%MP_PHYSICS==50) then ! added by DW for P3
                 qsum=Sum(hydro50%qhydro(ix,iy,iz,1:nsc)) ! added by DW for P3
@@ -1591,6 +1642,7 @@
                   if (conf%MP_PHYSICS==20) qq=scatt_type(iht)%qq(ix,iy,iz)
                   if (conf%MP_PHYSICS== 8) qq=hydro%qhydro(ix,iy,iz,iht) !Added by oue 2016/09/19
                   if (conf%MP_PHYSICS==30) qq=hydro%qhydro(ix,iy,iz,iht) !Added by oue 2017/07/17 ICON
+                  if (conf%MP_PHYSICS==38) qq=hydro%qhydro(ix,iy,iz,iht) !Added by Cha 2025/08/20 MP38
                   if (conf%MP_PHYSICS==40) qq=hydro%qhydro(ix,iy,iz,iht) !Added by oue 2017/07/21 RAMS
                   if (conf%MP_PHYSICS==50) qq=hydro50%qhydro(ix,iy,iz,iht) ! added by DW 2017/10/30 P3
                   if (conf%MP_PHYSICS==70) qq=scatt_type(iht)%qq(ix,iy,iz) ! added by oue for SAM warm bin
@@ -1612,7 +1664,7 @@
  
                     if ((conf%MP_PHYSICS== 9).or.(conf%MP_PHYSICS==10).or.(conf%MP_PHYSICS== 8) .or. &
                         (conf%MP_PHYSICS==30).or.(conf%MP_PHYSICS==40).or.(conf%MP_PHYSICS==75) .or.&
-                        (conf%MP_PHYSICS==80)) then !Modified by oue 2016/09/19, 2017/07/17 2018/06/17 ICON RAMS SAM, Apr 2020 CM1
+                        (conf%MP_PHYSICS==80)) then !Modified by oue 2016/09/19, 2017/07/17 2018/06/17 ICON RAMS SAM, Apr 2020 CM1; !Added by Cha 2025/08/20 MP38
                       !AUG2019
                       ! AT NOTE: two parameteres relative for airborne obs enter
                        ! into processing subrs: conf% airborne and elevx
@@ -1646,6 +1698,21 @@
                                          mpl_back_true,mpl_ext,&
                                          spectra_bins,zhh_spectra,zvh_spectra,zvv_spectra) 
                     endif ! added by DW
+                    if (conf%MP_PHYSICS==38) then !Added by TYC 2025/10 MP38
+                      call processing_mp38(iht, conf,elevx,env%w(ix,iy,iz),&
+                                      env%temp(ix,iy,iz),env%rho_d(ix,iy,iz),env%rho_d(ix,iy,1), &
+                                      hydro38%qhydro(ix,iy,iz,iht),hydro38%qnhydro(ix,iy,iz,iht),&
+                                      hydro38%qvgraup(ix,iy,iz),&
+                                      spectra%VNyquist,spectra%NOISE_1km,spectra%NFFT,spectra%Nave,&
+                                      dist_from_radar,w_r,sw_dyn,&
+                                      zhh,zvv,zvh,RHOhvc,&
+                                      dvh,d_dvh,Dopp,&
+                                      Kdp,Adp,Ah,Av,&
+                                      diff_back_phase,&
+                                      ceilo_back_true,ceilo_ext,&
+                                      mpl_back_true,mpl_ext,&
+                                      spectra_bins,zhh_spectra,zvh_spectra,zvv_spectra)
+                    endif
                     !
                     if (conf%MP_PHYSICS==20) then 
                       call processing_sbm(iht,conf,elevx,&
@@ -2333,6 +2400,7 @@
         if (conf%MP_PHYSICS==10)  qqc=hydro%qhydro(:,:,:,iht)
         if (conf%MP_PHYSICS==20)  qqc=scatt_type(iht)%qq
         if (conf%MP_PHYSICS==30)  qqc=hydro%qhydro(:,:,:,iht) !added by oue 2017/07/17 ICON
+        if (conf%MP_PHYSICS==38)  qqc=hydro%qhydro(:,:,:,iht) !added by Cha 2025/08/20 MP38
         if (conf%MP_PHYSICS==40)  qqc=hydro%qhydro(:,:,:,iht) !added by oue 2017/07/21 RAMS
         if (conf%MP_PHYSICS==50)  qqc=hydro50%qhydro(:,:,:,iht) ! added by DW 2017/10/30 P3
         if (conf%MP_PHYSICS==70)  qqc=scatt_type(iht)%qq !added by oue SAM 
@@ -2346,6 +2414,7 @@
           if (conf%MP_PHYSICS==10) qqc=qqc+hydro%qhydro(:,:,:,isc)
           if (conf%MP_PHYSICS==20) qqc=qqc+scatt_type(isc)%qq
           if (conf%MP_PHYSICS==30) qqc=qqc+hydro%qhydro(:,:,:,isc) !added by oue 2017/07/17 ICON
+          if (conf%MP_PHYSICS==38) qqc=qqc+hydro%qhydro(:,:,:,isc) !Added by Cha 2025/08/20 MP38
           if (conf%MP_PHYSICS==40) qqc=qqc+hydro%qhydro(:,:,:,isc) !added by oue 2017/07/21 RAMS
           if (conf%MP_PHYSICS==50) qqc=qqc+hydro50%qhydro(:,:,:,isc) ! added by DW 2017/10/30 P3
           if (conf%MP_PHYSICS==70) qqc=qqc+scatt_type(isc)%qq !added by oue SAM 
@@ -2427,6 +2496,7 @@
     if (conf%MP_PHYSICS==09) call deallocate_hydro_var(hydro)
     if (conf%MP_PHYSICS==10) call deallocate_hydro_var(hydro)
     if (conf%MP_PHYSICS==30) call deallocate_hydro_var(hydro) !added by oue 2017/07/17 ICON
+    if (conf%MP_PHYSICS==38) call deallocate_hydro_var(hydro) !added by Cha 2025/08/20 MP38
     if (conf%MP_PHYSICS==40) call deallocate_hydro_var(hydro) !added by oue 2017/07/21 RAMS
     if (conf%MP_PHYSICS==50) call deallocate_hydro50_var(hydro50) ! added by DW 2017/10/30 P3
     if (conf%MP_PHYSICS==75) call deallocate_hydro_var(hydro)  !added by oue SAM morr

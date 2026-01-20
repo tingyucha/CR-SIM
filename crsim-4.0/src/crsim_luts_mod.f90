@@ -69,6 +69,7 @@
   integer,parameter           :: n_lden_unrice=26   ! added by DW 
   integer,parameter           :: n_lden_graupP3=29  ! added by DW 
   integer,parameter           :: n_lden_parice=29   ! added by DW 
+  integer,parameter           :: n_lden_graup38=9  ! added by Cha 2025/08/20 for MP38
   
   Real*8                      :: lfreq(n_lfreq)
   Real*8                      :: lelev(n_lelev)
@@ -92,6 +93,7 @@
   Real*8                      :: lden_unrice(n_lden_unrice)      ! added by DW 
   Real*8                      :: lden_graupP3(n_lden_graupP3)    ! added by DW 
   Real*8                      :: lden_parice(n_lden_parice)      ! added by DW 
+  Real*8                      :: lden_graup38(n_lden_graup38)    ! added by Cha 2025/08/20 for MP38
   
 
   data lfreq/3.d0, 5.5d0, 9.5d0, 13.6d0, 35.d0, 94.d0/
@@ -128,6 +130,7 @@
   !data lden_snow/100.d0, 200.d0, 300.d0, 400.d0, 500.d0/ 
  
   data lden_graup/400.d0, 500.d0, 900.d0/  !modified by oue 2017/07/17, 2018/03/13
+  data lden_graup38/50.d0, 100.d0, 200.d0, 300.d0, 400.d0, 500.d0, 600.d0, 700.d0, 800.d0/  !added by Cha 2025/08/20
   data lden_smallice/1.d0, 900.d0/   ! added by DW 2017/10/30 for P3
   data lden_unrice/1.d0, 5.d0, 10.d0, 20.d0, 30.d0, 40.d0, 50.d0, 60.d0, 70.d0, 80.d0,&
                    90.d0, 100.d0, 150.d0, 200.d0, 250.d0, 300.d0, 350.d0, 400.d0,&

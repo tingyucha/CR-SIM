@@ -144,6 +144,30 @@ real*4,Dimension(:,:,:,:),Allocatable      :: qngraup ! [1/kg] Graupel  Number c
 End Type wrf_rvar_mp08
 !!!-- added by oue
 !!
+!!! Added by Cha 2025/08/20 --
+Type wrf_rvar_mp38
+!
+integer                  :: nt
+integer                  :: nx
+integer                  :: ny
+integer                  :: nz
+!
+real*4,Dimension(:,:,:,:),Allocatable      :: qcloud ! [kg/kg] Cloud water mixing ratio
+real*4,Dimension(:,:,:,:),Allocatable      :: qrain  ! [kg/kg] Rain water mixing ratio
+real*4,Dimension(:,:,:,:),Allocatable      :: qice   ! [kg/kg] Ice water mixing ratio
+real*4,Dimension(:,:,:,:),Allocatable      :: qsnow  ! [kg/kg] Snow water mixing ratio
+real*4,Dimension(:,:,:,:),Allocatable      :: qgraup ! [kg/kg] Graupel water mixing ratio
+
+real*4,Dimension(:,:,:,:),Allocatable      :: qncloud ! [1/kg] Cloud Number concentration
+real*4,Dimension(:,:,:,:),Allocatable      :: qnrain  ! [1/kg] Rain Number concentration
+real*4,Dimension(:,:,:,:),Allocatable      :: qnice   ! [1/kg] Ice  Number concentration
+real*4,Dimension(:,:,:,:),Allocatable      :: qngraup ! [1/kg] Graupel  Number concentration
+
+real*4,Dimension(:,:,:,:),Allocatable      :: qvgraup ! [m^3/kg] Graupel  Particle Volume
+!
+End Type wrf_rvar_mp38
+!!!-- added by Cha
+!!
 !!! Added by oue 2017/07/17--for ICON
 Type wrf_rvar_mp30
 !
@@ -427,6 +451,33 @@ Allocate(str%qngraup(nx,ny,nz,nt))
 return
 end subroutine allocate_wrf_rvar_mp08
 !!!-- added by oue
+
+!!! Added by Cha 2025/08/20 ---
+subroutine allocate_wrf_rvar_mp38(str)
+Implicit None
+Type(wrf_rvar_mp38),Intent(InOut)     :: str
+Integer                              :: nt,nx,ny,nz
+!
+nt=str%nt
+nx=str%nx 
+ny=str%ny
+nz=str%nz
+!
+Allocate(str%qcloud(nx,ny,nz,nt))
+Allocate(str%qrain(nx,ny,nz,nt))
+Allocate(str%qice(nx,ny,nz,nt))
+Allocate(str%qsnow(nx,ny,nz,nt))
+Allocate(str%qgraup(nx,ny,nz,nt))
+!
+Allocate(str%qncloud(nx,ny,nz,nt))
+Allocate(str%qnrain(nx,ny,nz,nt))
+Allocate(str%qnice(nx,ny,nz,nt))
+Allocate(str%qngraup(nx,ny,nz,nt))
+Allocate(str%qvgraup(nx,ny,nz,nt))
+!
+return
+end subroutine allocate_wrf_rvar_mp38
+!!!-- added by Cha
 !
 !!! Added by oue 2017/07/17---for ICON
 subroutine allocate_wrf_rvar_mp30(str)
@@ -717,6 +768,29 @@ str%qngraup=m999
 return
 end subroutine initialize_wrf_rvar_mp08
 !!!-- added by oue
+
+!!! Added by Cha 2025/08/20 --
+subroutine initialize_wrf_rvar_mp38(str)
+Implicit None
+Type(wrf_rvar_mp38),Intent(InOut)     :: str
+ReaL*4,parameter                     :: m999=-999.e0     
+!
+str%qcloud=m999
+str%qrain=m999
+str%qice=m999
+str%qsnow=m999
+str%qgraup=m999
+!
+str%qncloud=m999
+str%qnrain=m999
+str%qnice=m999
+str%qngraup=m999
+str%qvgraup=m999
+!
+return
+end subroutine initialize_wrf_rvar_mp38
+!!!-- added by Cha
+
 !
 !!! Added by oue 2017/07/17 --for ICON
 subroutine initialize_wrf_rvar_mp30(str)
@@ -983,6 +1057,33 @@ str%nz=0
 return
 end subroutine deallocate_wrf_rvar_mp08
 !!--added by oue
+
+!!Added by oue 2025/08/20 --
+subroutine deallocate_wrf_rvar_mp38(str)
+Implicit None
+Type(wrf_rvar_mp38),Intent(InOut)     :: str
+!
+Deallocate(str%qcloud)
+Deallocate(str%qrain)
+Deallocate(str%qice)
+Deallocate(str%qsnow)
+Deallocate(str%qgraup)
+!
+Deallocate(str%qncloud)
+Deallocate(str%qnrain)
+Deallocate(str%qnice)
+Deallocate(str%qngraup)
+Deallocate(str%qvgraup)
+!
+str%nt=0
+str%nx=0 
+str%ny=0 
+str%nz=0 
+!
+return
+end subroutine deallocate_wrf_rvar_mp38
+!!--added by Cha
+
 !
 !!Added by oue 2017/7/17 --for ICON
 subroutine deallocate_wrf_rvar_mp30(str)

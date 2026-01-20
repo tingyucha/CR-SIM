@@ -912,6 +912,163 @@
   end subroutine ReadInpWRF_MP_PHYSICS_08
   !!-- added by oue
   !----------------------------------------------------------------
+    !-------------------------------------------------------------------------------------------------------------------
+  !!! Added by Cha, 2025/08/20
+  subroutine ReadInpWRF_MP_PHYSICS_38(InpFile,str,status)
+  Use netcdf
+  Use typeSizes
+  Use wrf_var_mod
+  Use wrf_rvar_mod
+  Implicit None
+  !
+  Character(len=*),Intent(in)                              :: InpFile
+  Type(wrf_var_mp38),Intent(InOut)                         :: str
+  Integer,Intent(out)                                      :: status
+  !
+  Type(wrf_rvar_mp38)                                      :: strr
+  integer                                                  :: nDims, nVars
+  integer                                                  :: ncid, iVar
+  Character(len=nf90_max_name), Allocatable , Dimension(:) :: var_names
+  Character(len=nf90_max_name)                             :: name, err_msg
+    !
+    !
+    ! define strr dimensions
+    strr%nt=str%nt
+    strr%nx=str%nx
+    strr%ny=str%ny
+    strr%nz=str%nz
+    !
+    ! allocate strr vars
+    call allocate_wrf_rvar_mp38(strr)
+    call initialize_wrf_rvar_mp38(strr)
+    !
+    !Open the file
+    status=  nf90_open(Trim(InpFile), NF90_NOWRITE, ncid)
+    If (status/=0) Then
+      err_msg = 'Error in my_nf90_open'
+      Goto 999
+    End If
+    !
+    ! Get info on nDims and nVars
+    status= nf90_inquire(ncid, nDims, nVars)
+    If (status/=0) Then
+      err_msg = 'Error in my_nf90_inquire'
+      Goto 999
+    End If
+    !
+    !
+    ! Create arrays that contain the variables
+    Allocate(var_names(1:nVars))
+    !
+    Do  iVar=1,nVars
+      !
+      status= nf90_inquire_variable(ncid, iVar, name=name)
+      If (status/=0) Then
+        err_msg = 'Error in my_nf90_inquire_variable: '//name
+        Goto 999
+      Endif
+      !
+      Select Case (Trim(Adjustl(name)))
+      !
+      Case ('QCLOUD')
+      status=nf90_get_var(ncid,iVar,strr%QCLOUD)
+      str%QCLOUD = dble(strr%QCLOUD)
+      If (status/=0) Then
+        err_msg = 'Error in my_nf90_get_var: QCLOUD'
+        Goto 999
+      End If
+      !
+      Case ('QRAIN')
+      status=nf90_get_var(ncid,iVar,strr%QRAIN)
+      str%QRAIN = dble(strr%QRAIN)
+      If (status/=0) Then
+        err_msg = 'Error in my_nf90_get_var: QRAIN'
+        Goto 999
+      End If
+      !
+      Case ('QICE')
+      status=nf90_get_var(ncid,iVar,strr%QICE)
+      str%QICE = dble(strr%QICE)
+      If (status/=0) Then
+        err_msg = 'Error in my_nf90_get_var: QICE'
+        Goto 999
+      End If
+      !
+      Case ('QSNOW')
+      status=nf90_get_var(ncid,iVar,strr%QSNOW)
+      str%QSNOW = dble(strr%QSNOW)
+      If (status/=0) Then
+        err_msg = 'Error in my_nf90_get_var: QSNOW'
+        Goto 999
+      End If
+      !
+      Case ('QGRAUP')
+      status=nf90_get_var(ncid,iVar,strr%QGRAUP)
+      str%QGRAUP = dble(strr%QGRAUP)
+      If (status/=0) Then
+        err_msg = 'Error in my_nf90_get_var: QGRAUP'
+        Goto 999
+      End If
+      !
+      Case ('QNCLOUD')
+      status=nf90_get_var(ncid,iVar,strr%QNCLOUD)
+      str%QNCLOUD = dble(strr%QNCLOUD)
+      If (status/=0) Then
+        err_msg = 'Error in my_nf90_get_var: QNCLOUD'
+        Goto 999
+      End If
+      !
+      Case ('QNRAIN')
+      status=nf90_get_var(ncid,iVar,strr%QNRAIN)
+      str%QNRAIN = dble(strr%QNRAIN)
+      If (status/=0) Then
+        err_msg = 'Error in my_nf90_get_var: QNRAIN'
+        Goto 999
+      End If
+      !
+      Case ('QNICE')
+      status=nf90_get_var(ncid,iVar,strr%QNICE)
+      str%QNICE = dble(strr%QNICE)
+      If (status/=0) Then
+        err_msg = 'Error in my_nf90_get_var: QNICE'
+        Goto 999
+      End If
+      !
+      Case ('QVGRAUPEL')
+      status=nf90_get_var(ncid,iVar,strr%QVGRAUPEL)
+      str%QVGRAUPEL = dble(strr%QVGRAUPEL)
+      If (status/=0) Then
+        err_msg = 'Error in my_nf90_get_var: QVGRAUPEL'
+        Goto 999
+      End If
+      !
+      Case ('QNGRAUPEL')
+      status=nf90_get_var(ncid,iVar,strr%QNGRAUP)
+      str%QNGRAUP = dble(strr%QNGRAUP)
+      If (status/=0) Then
+        err_msg = 'Error in my_nf90_get_var: QNGRAUPEL'
+        Goto 999
+      End If
+      !
+      End Select
+      !
+    End Do
+    !
+    Deallocate(var_names)
+    
+999 If (status.Ne.0) Then
+      write(*,*)  err_msg
+      Call Exit(1)
+    Else
+      status=nf90_close(ncid)
+    Endif
+    !
+    call deallocate_wrf_rvar_mp38(strr)
+    !
+  return
+  end subroutine ReadInpWRF_MP_PHYSICS_38
+  !!-- added by Cha
+  !----------------------------------------------------------------
   !-------------------------------------------------------------------------------------------------------------------
   !!! Added by oue, 2017/07/17 for ICON
   subroutine ReadInpWRF_MP_PHYSICS_30(InpFile,str,status)

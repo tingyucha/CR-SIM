@@ -1,0 +1,31 @@
+ SCATTCODE-CRSIM v 1.0
+ Oct 16, 2019
+
+This code creates the look-up-tables for the CR-SIM software. It is 
+released under GNU GENERAL PUBLIC LICENSE. The ownership of the 
+each component is described here. 
+
+* core algorithm code and the support scripts *sh for executions
+  files fort_tmatrix.f90, axis_ratio.f90, smax_garn.f90
+  run_tmat_cloud.sh  run_tmat_graupel.sh  run_tmat_ice.sh  
+  run_tmat_rain.sh  run_tmat_snow.sh
+
+	Author: Aleksandra Tatarevic
+	Owner: McGill University
+	License:  GNU GENERAL PUBLIC LICENSE
+
+* T-Matrix scattering code
+ files ampld.lp.f, ampld.par.f,  lpd.f 
+
+	Author: Michael Mishchenko
+	Owner: NASA
+	License: permissive
+
+
+* water and ice refracitive index code
+ files s_ref_ind_water.f90, s_refice.f
+
+	Author: Eric Smith
+	Owner: Colorado State University
+	License: permissive
+

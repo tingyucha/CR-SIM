@@ -215,7 +215,12 @@
     IF (conf%MP_PHYSICS==30) THEN
       call hydro_icon(isc,nd,dmin,dmax,temp,rho_d,qhydro,qnhydro,diam,rho,NN,fvel) 
     ENDIF
-    !!--- added by oue
+    !!--- added by Cha
+    !! Added by Cha 2025/08/20, may need to modify ---
+    IF (conf%MP_PHYSICS==38) THEN
+      call hydro_thompson38(isc,nd,dmin,dmax,temp,rho_d,qhydro,qnhydro,qvgraup,diam,rho,NN,fvel) 
+    ENDIF
+    !!--- added by Cha
     !! Added by oue 2017/07/21 --- for RAMS
     IF (conf%MP_PHYSICS==40) THEN
       call hydro_rams(isc,nd,dmin,dmax,temp,rho_d,qhydro,qnhydro,diam,rho,NN,fvel) 
@@ -232,6 +237,10 @@
       ! when hydrometeor density changes with size
       call GetPolarimetricInfofromLUT(isc,conf,elev,ww,temp,nd,diam,NN,rho,fvel,Zhh,Zvv,Zvh,RHOhvc,&
                                       DVh,dDVh,Dopp,Kdp,Adp,Ah,Av,diff_back_phase,zhh_d,zvh_d,zvv_d)
+    ELSE IF ((conf%MP_PHYSICS==38).and.(isc==5)) THEN 
+      ! when graupel/hail density changes with size, added by Cha 2025/08/20 for MP38
+      call GetPolarimetricInfofromLUT(isc,conf,elev,ww,temp,nd,diam,NN,rho,fvel,Zhh,Zvv,Zvh,RHOhvc,&
+                                      DVh,dDVh,Dopp,Kdp,Adp,Ah,Av,diff_back_phase,zhh_d,zvh_d,zvv_d)                                      
     ELSE ! density of hydrometeor doesn't change with size
       call GetPolarimetricInfofromLUT_cdws(isc,conf,elev,ww,temp,nd,diam,NN,rho(1),fvel,Zhh,Zvv,Zvh,RHOhvc,&
                                       DVh,dDVh,Dopp,Kdp,Adp,Ah,Av,diff_back_phase,zhh_d,zvh_d,zvv_d)
@@ -521,6 +530,129 @@
   return
   end subroutine processing_sbm
   !   
+   !---Added by Cha 2025/08/20
+  subroutine processing_mp38(isc,conf,elev,ww,temp,rho_d,rho_ds,qhydro,qnhydro,&
+                        qvgraup,&
+                        spectra_VNyquist,spectra_NOISE_1km,NFFT,spectra_Nave,&
+                        range_m,w_r,sw_dyn,&
+                        Zhh,Zvv,Zvh,RHOhvc,DVh,dDVh,Dopp,Kdp,Adp,Ah,Av,diff_back_phase,&
+                        ceilo_back_true,ceilo_ext,mpl_back_true,mpl_ext,&
+                        spectra_bins,zhh_spectra,zvh_spectra,zvv_spectra)
+  Use crsim_mod
+  Use phys_param_mod, ONLY: m999
+  Implicit None
+  !
+  Integer,Intent(In)                 :: isc
+  Type(conf_var),Intent(in)          :: conf
+  Real*8, Intent(In)                 :: elev
+  Real*8, Intent(In)                 :: ww ![m/s] vertical air velocity
+  Real*8, Intent(In)                 :: temp ! [C] temperature
+  Real*8, Intent(In)                 :: rho_d   ! [kg/m^3]  air density
+  Real*8, Intent(In)                 :: rho_ds  ! [kg/m^3]  air density at the first atm. level
+  Real*8, Intent(In)                 :: qhydro  ! [kg/kg]  mixing ratio
+  Real*8, Intent(In)                 :: qnhydro ! [1/kg]  total concentration
+  Real*8, Intent(In)                 :: qvgraup ! [m^3/kg]  graupel particle volume
+  !-- input for Doppler spectra
+  Real*8, Intent(In)                 :: spectra_VNyquist,spectra_NOISE_1km
+  Integer,Intent(In)                 :: NFFT ! size of spectra_bins. If spectraID/=1, this is 1
+  Integer,Intent(In)                 :: spectra_Nave
+  Real*8, Intent(In)                 :: range_m ! distance from radar [m], used for Doppler spectra simulation
+  Real*8, Intent(In)                 :: w_r     ! radial component of wind field [m/s], used for Doppler spectra
+ Real*8, Intent(In)                 :: sw_dyn  ! spectra broadening due to dynamics [m/s], used for Doppler spectra
+  !--
+  Real*8, Intent(Out)                :: Zhh,Zvv,Zvh,RHOhvc ! mm^6/m^3
+  Real*8, Intent(Out)                :: DVh  ! mm^6/m^3 m/s   assuming ww=0 m/s
+  Real*8, Intent(Out)                :: dDVh  ! mm^6/m^3 (m/s)^2  assuming ww=0 m/s
+  Real*8, Intent(Out)                :: Dopp  ! mm^6/m^3 m/sa  ww from WRF
+  Real*8, Intent(Out)                :: Kdp   ! deg/km
+  Real*8, Intent(Out)                :: Adp   ! dB/km
+  Real*8, Intent(Out)                :: Ah    ! dB/km
+  Real*8, Intent(Out)                :: Av    ! dB/km
+  Real*8, Intent(Out)                :: diff_back_phase  ! deg
+  Real*8, Intent(Out)                :: ceilo_back_true ! true (unatenuated) ceilo lidar backscatter [m sr]^-1
+  Real*8, Intent(Out)                :: ceilo_ext       ! ceilo lidar extinction coefficient [m]^-1
+  Real*8, Intent(Out)                :: mpl_back_true ! mpl true (unatenuated) lidar backscatter [m sr]^-1
+  Real*8, Intent(Out)                :: mpl_ext       ! mpl lidar extinction coefficient [m]^-1
+  !-- Output for Doppler spectra
+  Real*8, Intent(Out)                :: spectra_bins(nfft)  ! spectra velocity bin [m/s]
+  Real*8, Intent(Out)                :: zhh_spectra(nfft),zvh_spectra(nfft),zvv_spectra(nfft) !output 1D Doppler spectra [mm^6 m^-3 / (m/s)]
+  !--
+  !
+  integer                           :: nd
+  real*8,dimension(:),Allocatable   :: NN    ! 1/m^3
+  real*8,dimension(:),Allocatable   :: fvel ! m/s
+  real*8,dimension(:),Allocatable   :: diam,ddiam  ! m
+  real*8,dimension(:),Allocatable   :: rho   ! kg/m^3
+  real*8,dimension(:),Allocatable   :: zhh_d,zvh_d,zvv_d ! mm^6, used for spectrum generation
+  !
+  real*8                            :: dmin,dmax ! um
+    !
+    ! for each grid point
+    !------------------------------------------------------------------------------------
+    !
+    Call hydro_info(isc,dmin,dmax,nd) ! number of diams, min,max diam for which the scatt info are stored
+    !
+    Allocate(NN(nd),fvel(nd),diam(nd),rho(nd))
+    NN=0.d0 ; fvel=0.d0 ; diam=0.d0; rho=0.d0
+    !!
+    IF (conf%MP_PHYSICS==38) THEN ! Cha for MP38
+      call hydro_thompson38(isc,nd,dmin,dmax,temp,rho_d,qhydro,qnhydro,qvgraup,diam,rho,NN,fvel)
+    ENDIF
+    !!--- added by oue
+    Allocate(zhh_d(nd),zvh_d(nd),zvv_d(nd)) ! used for Doppler spectra simulation
+    zhh_d=0.d0 ; zvh_d=0.d0 ; zvv_d=0.d0
+    !------------------------------------------------------------------------------------
+    IF (isc==5) THEN
+      call GetPolarimetricInfofromLUT(isc,conf,elev,ww,temp,nd,diam,NN,rho,fvel,Zhh,Zvv,Zvh,RHOhvc,&
+                                      DVh,dDVh,Dopp,Kdp,Adp,Ah,Av,diff_back_phase,zhh_d,zvh_d,zvv_d)
+    ELSE ! density of hydrometeor doesn't change with size
+      call GetPolarimetricInfofromLUT_cdws(isc,conf,elev,ww,temp,nd,diam,NN,rho(1),fvel,Zhh,Zvv,Zvh,RHOhvc,&
+                                         DVh,dDVh,Dopp,Kdp,Adp,Ah,Av,diff_back_phase,zhh_d,zvh_d,zvv_d)
+    ENDIF
+    !
+    !=======================================================!
+    !-- Simulate Doppler spectrum---------------------------!
+    !call spectrum subroutine
+    spectra_bins = 0.d0 ; zhh_spectra = 0.d0 ; zvh_spectra = 0.d0 ; zvv_spectra = 0.d0
+    if(conf%spectraID==1)then
+      Allocate(ddiam(nd+1))
+      ddiam = m999 !!!diameter bin sizes [m]
+      call processing_ds(isc,conf,spectra_VNyquist,spectra_NOISE_1km,NFFT,spectra_Nave,&
+                         &range_m,elev,w_r,sw_dyn,nd,NN,diam,ddiam,fvel,zhh_d,zvh_d,zvv_d,&
+                         &spectra_bins,zhh_spectra,zvh_spectra,zvv_spectra)
+      Deallocate(ddiam)
+    end if
+    !---End Simulate Doppler spectrum---------------------------!
+    !=======================================================!
+    !
+    Deallocate(zhh_d,zvh_d,zvv_d)
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    !------------------------------------------------------------------------------------
+    !
+    ! --- introduce cloud ceilo lidar measurements ----
+    ceilo_back_true=0.d0 ; ceilo_ext=0.d0
+    if ( ((isc==1).or.(isc==7)) .and. (conf%ceiloID==1)) then
+#ifdef __PRELOAD_LUT__
+      call GetCloudLidarMeasurements_preload(nd,diam,NN,ceilo_back_true,ceilo_ext)
+#else
+      call GetCloudLidarMeasurements(conf,nd,diam,NN,ceilo_back_true,ceilo_ext)
+#endif
+    endif
+    !----------------------------------------------
+    ! --- introduce MPL measurements for liquid and ice clouds ----
+    mpl_back_true=0.d0 ; mpl_ext=0.d0
+    IF  (conf%mplID>0) THEN
+      if ( (isc==1) .or. (isc==3).or.(isc==7)) then
+        call GetCloud_MPL_Measurements(isc,conf,nd,diam,NN,mpl_back_true,mpl_ext)
+      endif
+    ENDIF
+    !----------------------------------------------
+    !
+    Deallocate(NN,fvel,diam,rho)
+    !
+  return
+  end subroutine processing_mp38
+!-----------------
   subroutine hydro_info(isc,dmin,dmax,nd)
   Implicit None
   Integer,Intent(In)                 :: isc
@@ -763,10 +895,10 @@
     !
     Allocate(lambda(nd),N0(nd))
     !
-    lambda=(pi*rhow_25C*Nc)/(6.d0*qhydro) * dgamma(mu+4.d0)/dgamma(mu+1.d0)
+    lambda=(pi*rhow_25C*Nc)/(6.d0*qhydro) * gamma(mu+4.d0)/gamma(mu+1.d0)
     lambda=lambda**oneOverThree
     !
-    N0=(Nc * lambda**(mu+1.d0))/(dgamma(mu+1.d0))
+    N0=(Nc * lambda**(mu+1.d0))/(gamma(mu+1.d0))
     !
     do ir=1,nd
       fvel(ir) = av * (diam(ir))**bv  ! m/s
@@ -1034,8 +1166,8 @@
     !
     !
     !lambda=(pi * rho_hydro * qn/qhydro)**bb ! 1/m
-    !gamma_alphap1= dgamma(mu+1)
-    !gfac=dgamma(mu+bm) / gamma_alphap1
+    !gamma_alphap1= gamma(mu+1)
+    !gfac=gamma(mu+bm) / gamma_alphap1
     !lambda=(gfac * (am*qn)/(qhydro))**bb  ! 1/m
   
   
@@ -1260,6 +1392,402 @@
   end subroutine hydro_thompson
   !!
   !!-- addedd by oue
+
+  !---------------------------------------------------------------------------------------
+  !!! Added by Cha, 2025/08/20
+  subroutine hydro_thompson38(isc,nd,dmin,dmax,temp,rho_d,qhydro,qnhydro,qvgraup,diam,rho,NN,fvel)
+  use crsim_mod
+  Use phys_param_mod, ONLY: pi,oneOverThree,Rd
+  Implicit None
+  !-- WRFv3.7 and Thompson et al. (2008)
+  integer, intent(In)     :: isc
+  integer,Intent(in)      :: nd
+  real*8,Intent(in)       :: dmin,dmax ! um
+  real*8,Intent(in)       :: temp      ! C
+  real*8,Intent(in)       :: rho_d     ! kg/m^3
+  real*8,Intent(in)       :: qhydro    ! kg/kg
+  real*8,Intent(in)       :: qnhydro   ! 1/kg 
+  real*8,Intent(in)       :: qvgraup   ! m^3/kg
+  real*8,Intent(Out)      :: diam(nd)  ! m
+  real*8,Intent(Out)      :: rho(nd)   ! kg/m^3
+  real*8,Intent(Out)      :: NN(nd)    ! 1/m^3
+  real*8,Intent(Out)      :: fvel(nd)  ! m/s
+  
+  real*8                               :: rho_hydro,rho_surf ! kg/m^3
+  real*8                               :: av,bv,k,fc,fck,fd
+  real*8                               :: lambda,N0,mu
+  !
+  integer                              :: ir,j
+  real*8                               :: ddiam
+  !
+  real*8                               :: am,bm
+  real*8                               :: Nt_c !/cm^3
+  real*8                               :: rc ! water content kg/m^3
+  real*8                               :: qn ! number concentration, identical to qnhydro
+  real*8                               :: gammln
+  ! Parameters used for cloud and graupel size distributions
+  real*8                               :: cce1,cce2,cce3,ocg1,ocg2,ccg1,ccg2,ccg3
+  real*8                               :: X,Y,TMP,SER,STP
+  ! Parameters used for graupel size distribution
+  real*8                               :: N0_exp,lam_exp ! used for graupel
+  ! Parameters used for cloud size distribution
+  real*8, parameter                    :: N1 = 9.d9
+  real*8, parameter                    :: N2 = 2.d6
+  real*8, parameter                    :: qr0 = 1.d-4
+  ! Parameters used for snow size distribition
+  real*8, parameter                    :: Kap0 = 490.6d0
+  real*8, parameter                    :: Kap1 = 17.46d0
+  real*8, parameter                    :: Lam0 = 20.78d0
+  real*8, parameter                    :: Lam1 = 3.29d0
+  real*8                               :: Tc !temperature in C used for snow
+  real*8                               :: cse1,a_,b_,loga_,M0,M2,M3,Mrat,slam1,slam2
+  real*8, Dimension(10), parameter       :: &
+       sa = (/ 5.065339d0, -0.062659d0, -3.032362d0, 0.029469d0, -0.000285d0, &
+               0.31255d0,   0.000204d0,  0.003199d0, 0.0d0,      -0.015952d0/)
+  real*8, Dimension(10), parameter       :: &
+       sb = (/ 0.476221d0, -0.015896d0,  0.165977d0, 0.007468d0, -0.000141d0, &
+               0.060366d0,  0.000079d0,  0.000594d0, 0.0d0,      -0.003577d0/)
+  real*8, Dimension(9), parameter       :: &
+       av_g = (/ 45.9173813, 67.0867386, 98.0158463, 122.353378,     &
+                   143.204224, 161.794724, 178.762115, 194.488785,     &
+                   209.225876/)
+  real*8, Dimension(9), parameter       :: &
+       bv_g = (/0.640961647, 0.640961647, 0.640961647, 0.640961647,  &
+                  0.640961647, 0.640961647, 0.640961647, 0.640961647,  &
+                  0.640961647/)                 
+  double precision, dimension(6), parameter:: &
+       COF = (/76.18009172947146D0, -86.50532032941677D0, &
+               24.01409824083091D0, -1.231739572450155D0, &
+                 .1208650973866179D-2, -.5395239384953D-5/)
+  !  parameters for graupel size distribution
+  real*8  :: mvd_r,rg,N0_min,xslw1,ygra1,zans1
+  LOGICAL :: L_qr
+ 
+
+    ! init 
+    qn=0.d0
+    am=0.d0
+    rc=0.d0
+    rg=0.d0
+    ! --------------------------------------
+    rho_surf=101325.d0/(Rd*298.d0)
+    fc=rho_surf/rho_d
+    !  --------------------------------------
+    !
+    !
+    if (isc==1) then ! cloud
+      rho_hydro=1000.d0
+      k=0.5d0 ; av=0.316946d8 ; bv=2.0d0 ; fd=0.d0 ! coefficients for fall velocity
+      Nt_c = 100.d6 ! in m^-3 = 100 cm^-3
+      mu = MIN(15.d0, (1000.d6/Nt_c + 2.d0))
+      am = pi*rho_hydro/6.d0 ;   bm=3.d0
+      rc = qhydro * rho_d ! in kg m^-3
+      qn = Nt_c * 1.d6 / rho_d !in kg^-1
+    endif
+    !
+    if(isc==2) then ! rain
+      rho_hydro=1000.d0 
+      k=0.5d0 ; av=4854.0d0 ; bv=1.0d0 ; fd=195.d0
+      mu = 0.d0
+      am =pi*rho_hydro/6.d0 ;   bm=3.d0
+      qn = qnhydro
+    endif
+    !
+    if(isc==3) then ! ice
+      rho_hydro=890.d0
+      k=0.5d0 ; av=1847.5d0 ; bv=1.d0 ; fd=0.d0
+      mu =0.d0
+      am = pi*rho_hydro/6.d0 ;   bm=3.d0
+      qn = qnhydro
+    endif
+    !
+    if(isc==4) then ! snow
+      rho_hydro=100.d0 
+      k=0.5d0 ; av=40.d0 ; bv=0.55d0 ; fd=100.d0
+      mu = 0.6357d0
+      am = 0.069d0 ;   bm = 2.d0
+      rc = qhydro * rho_d   
+    endif
+    !
+    if(isc==5) then ! graupel
+      !rho_hydro=500.d0
+      k=0.5d0 ; !av=442.d0 ; bv=0.89d0 ; fd=0.d0
+      mu =0.d0
+      !am =pi*rho_hydro/6.d0 ;   
+      bm=3.d0
+      rc = qhydro * rho_d !fixed 2017.05
+    endif
+    !
+    !--------------------------------------
+    ! Diameter
+    do ir=1,nd
+      diam(ir)=dmin*1.d-4+dble(ir-1)*(dmax-dmin)/dble(nd-1)*1.d-4 ! diameter in cm
+    enddo
+    ddiam=diam(10)-diam(9) ! ddiam in cm
+    !
+    ddiam=ddiam*1.d-2 ! ddiam in m
+    diam=diam*1.d-2 ! diameter in m 
+    !
+    !---------------------------------------
+    !
+    rho=rho_hydro
+    if(isc==4) then ! snow
+      do ir=1,nd
+        rho(ir)=0.069d0 * 6.d0 / pi / diam(ir)
+      enddo
+    endif
+    !
+    ! Added by Cha 2025/08/20
+    if(isc==5) then ! graupel
+      do ir=1,nd
+        rho(ir)= 1 / qvgraup
+      enddo
+    endif
+    !
+    !---------------------------------------
+    ! Fall velocity
+    fck=fc**k
+        ! Added by Cha 2025/08/20
+    if(isc==5) then ! graupel
+      do ir=1,nd
+        rho(ir)=1.d0 / qvgraup
+        fvel(ir) = av * (diam(ir))**bv * fck * dexp((-1.d0)*fd*diam(ir))  ! m/s
+      enddo
+    else
+      do ir=1,nd
+        fvel(ir) = av * (diam(ir))**bv * fck * dexp((-1.d0)*fd*diam(ir))  ! m/s
+      enddo
+    endif
+    !---------------------------------------
+    !
+    !
+    !lambda=(pi * rho_hydro * qn/qhydro)**bb ! 1/m
+    !gamma_alphap1= gamma(mu+1)
+    !gfac=gamma(mu+bm) / gamma_alphap1
+    !lambda=(gfac * (am*qn)/(qhydro))**bb  ! 1/m
+  
+  
+    if(isc==1) then !cloud
+      cce1=mu+1.d0
+      cce2=bm+mu+1.d0
+      !-- get ccg1 from cce1
+      X=cce1
+      Y=X
+      TMP=X+5.5D0
+      TMP=(X+0.5D0)*dlog(TMP)-TMP
+      SER=1.000000000190015D0
+      STP = 2.5066282746310005D0
+      do j=1,6
+        Y=Y+1.D0
+        SER=SER+COF(j)/Y
+      enddo
+      gammln =TMP+DLOG(STP*SER/X)
+      ccg1 = dexp(gammln)
+      ocg1=1.d0/ccg1
+      !--       
+      !-- get ccg2 from cce2
+      X=cce2
+      Y=X
+      TMP=X+5.5D0
+      TMP=(X+0.5D0)*dlog(TMP)-TMP
+      SER=1.000000000190015D0
+      STP = 2.5066282746310005D0
+      do j=1,6
+        Y=Y+1.D0
+        SER=SER+COF(j)/Y
+      enddo
+      gammln =TMP+DLOG(STP*SER/X)
+      ccg2 = dexp(gammln)
+      !--
+      lambda = 1.0D-6 * (Nt_c*am* ccg2 * ocg1 / rc)**oneOverThree !/m^1
+      N0 = 1.0D-18 * Nt_c*ocg1 * lambda**cce1
+      do ir=1,nd
+        NN(ir) = N0* (diam(ir)*1.0D6)**mu * DEXP(-lambda*(diam(ir)*1.0D6))*ddiam * 1.0D24
+      enddo
+    endif   
+    !
+    if((isc==2) .or. (isc==3)) then !rain, ice
+      cce2 = mu+1.d0
+      cce3 = bm+mu+1.d0
+      !-- get ccg2 from cce2
+      X=cce2
+      Y=X
+      TMP=X+5.5D0
+      TMP=(X+0.5D0)*dlog(TMP)-TMP
+      SER=1.000000000190015D0
+      STP = 2.5066282746310005D0
+      do j=1,6
+        Y=Y+1.D0
+        SER=SER+COF(j)/Y
+      end do
+      gammln =TMP+dlog(STP*SER/X)
+      ccg2 = dexp(gammln)
+      !-- get ccg3 from cce3
+      X=cce3
+      Y=X
+      TMP=X+5.5D0
+      TMP=(X+0.5D0)*dlog(TMP)-TMP
+      SER=1.000000000190015D0
+      STP = 2.5066282746310005D0
+      do j=1,6
+        Y=Y+1.D0
+        SER=SER+COF(j)/Y
+      end do
+      gammln =TMP+dlog(STP*SER/X)
+      ccg3 = dexp(gammln)
+      !--
+      lambda = (am*ccg3/ccg2 * qn/qhydro)**oneOverThree
+      N0 = qn*rho_d/ccg2 * lambda**cce2 !fixed: rho_d 2017.05.22
+      do ir=1,nd
+        NN(ir) = N0*diam(ir)**mu *DEXP(-lambda*diam(ir))*ddiam
+      enddo
+    endif
+    !
+    if(isc==4) then !snow
+      cse1 = bm+1.d0
+      Tc = temp
+      if(Tc >0) then
+        Tc = -0.01d0
+      endif
+      M2 = rc/am *1.0d0 !(bm)th moment (here, bm=3)
+      loga_ = sa(1) + sa(2)*Tc + sa(3)*cse1 &
+            + sa(4)*Tc*cse1 + sa(5)*Tc*Tc &
+            + sa(6)*cse1*cse1 + sa(7)*Tc*Tc*cse1 &
+            + sa(8)*Tc*cse1*cse1 + sa(9)*Tc*Tc*Tc &
+            + sa(10)*cse1*cse1*cse1
+      a_ = 10.d0**loga_
+      b_ = sb(1)+sb(2)*Tc+sb(3)*cse1 + sb(4)*Tc*cse1 &
+         + sb(5)*Tc*Tc + sb(6)*cse1*cse1 &
+         + sb(7)*Tc*Tc*cse1 + sb(8)*Tc*cse1*cse1 &
+         + sb(9)*Tc*Tc*Tc+sb(10)*cse1*cse1*cse1
+      M3 = a_ * M2**b_ !(bm+1)th moment 
+      Mrat = M2*(M2/M3)*(M2/M3)*(M2/M3)
+      M0   = (M2/M3)**mu
+      slam1 = M2 / M3 * Lam0
+      slam2 = M2 / M3 * Lam1
+      do ir=1,nd
+        NN(ir) = Mrat*(Kap0*DEXP(-slam1*diam(ir)) &
+               + Kap1*M0*diam(ir)**mu * DEXP(-slam2*diam(ir)))*ddiam
+      enddo
+    endif
+    !
+    if(isc==5) then !graupel
+      cce1=bm+1.d0
+      cce2=mu+1.d0
+      cce3=bm+mu+1.d0
+      !-- get ccg1 from cce1
+      X=cce1
+      Y=X
+      TMP=X+5.5D0
+      TMP=(X+0.5D0)*dlog(TMP)-TMP
+      SER=1.000000000190015D0
+      STP = 2.5066282746310005D0
+      do j=1,6
+        Y=Y+1.D0
+        SER=SER+COF(j)/Y
+      enddo
+      gammln =TMP+dlog(STP*SER/X)
+      ccg1 = dexp(gammln)
+      ocg1=1.d0/ccg1
+      !-- get ccg2 from cce2
+      X=cce2
+      Y=X
+      TMP=X+5.5D0
+      TMP=(X+0.5D0)*dlog(TMP)-TMP
+      SER=1.000000000190015D0
+      STP = 2.5066282746310005D0
+      do j=1,6
+        Y=Y+1.D0
+        SER=SER+COF(j)/Y
+      enddo
+      gammln =TMP+dlog(STP*SER/X)
+      ccg2 = dexp(gammln)
+      ocg2=1.d0/ccg2
+      !-- get ccg3 from cce3
+      X=cce3
+      Y=X
+      TMP=X+5.5D0
+      TMP=(X+0.5D0)*dlog(TMP)-TMP
+      SER=1.000000000190015D0
+      STP = 2.5066282746310005D0
+      do j=1,6
+        Y=Y+1.D0
+        SER=SER+COF(j)/Y
+      enddo
+      gammln =TMP+dlog(STP*SER/X)
+      ccg3 = dexp(gammln)
+      !--
+
+      !N0_exp=1.D6 ! in 1/m^-4
+      !lam_exp = (N0_exp*am*ccg1/rc)**(1./cce1)
+      !lambda = lam_exp * (ccg3*ocg2*ocg1)**oneOverThree
+      !N0 = max(1.D4,min(200./qhydro,5.D6))
+
+      !+---+-----------------------------------------------------------------+
+      !Calculate y-intercept, slope values for graupel. used for Z calculation
+      !in WRF
+      !+---+-----------------------------------------------------------------+
+      !mvd_r and L_qr depends on rain mixing ratio when rain mixing ratio > 1E-6 in WRF. 
+      !However, due to the CRSIM structure, rain mixing ratio is assumed to be <1E-6
+      !for graupel size distribution
+      mvd_r = 50.d-6
+      L_qr = .false.
+      !if (qhydro .gt. 1.E-6) then
+      rg = rc
+      !   L_qg = .true.
+      !else
+      !   rg = 1.E-12
+      !   L_qg = .false.
+      !endif
+      N0_min = 3.d6
+      if (L_qr .and. mvd_r.gt.100.d-6) then
+        xslw1 = 4.01d0 + dlog10(mvd_r)
+      else
+        xslw1 = 0.01d0
+      endif
+      ygra1 = 4.31d0 + dlog10(max(5.d-5, rg))
+      zans1 = 3.1d0 + (100.d0/(300.d0*xslw1*ygra1/(10.d0/xslw1+1.d0+0.25d0*ygra1)+30.d0+10.d0*ygra1))
+      N0_exp = 10.d0**(zans1)
+      N0_exp = MAX(1.d4, MIN(N0_exp, 3.d6))
+      N0_min = MIN(N0_exp, N0_min)
+      N0_exp = N0_min
+      lam_exp = (N0_exp*am*ccg1/rg)**(1.d0/cce1)
+      lambda = lam_exp * (ccg3*ocg2*ocg1)**(1.d0/bm)
+      N0 = N0_exp/(ccg2*lam_exp) * lambda**(1.d0/cce2)
+      !+---+-----------------------------------------------------------------+
+      !
+      do ir=1,nd
+        NN(ir) = N0* diam(ir)**mu * dexp(-lambda*diam(ir))*ddiam
+      enddo
+    endif
+    !
+    !
+    go to 234
+      if (isc==1) write(*,*) 'cloud',qhydro,qn
+      if (isc==2) write(*,*) 'rain',qhydro,qnhydro
+      if (isc==3) write(*,*) 'ice',qhydro,qnhydro
+      if (isc==4) write(*,*) 'snow',qhydro,qnhydro
+      if (isc==5) write(*,*) 'graup',qhydro,qnhydro
+      ! computed wcont/model_wcont
+      if (isc==1) write(*,*) 'cloud',(pi/6.d0*Sum(rho*NN*diam*diam*diam))/ (qhydro*rho_d)
+      if (isc==2) write(*,*) 'rain',(pi/6.d0*Sum(rho*NN*diam*diam*diam))/ (qhydro*rho_d)
+      if (isc==3) write(*,*) 'ice',(pi/6.d0*Sum(rho*NN*diam*diam*diam))/ (qhydro*rho_d)
+      if (isc==4) write(*,*) 'snow',(pi/6.d0*Sum(rho*NN*diam*diam*diam))/ (qhydro*rho_d)
+      if (isc==5) write(*,*) 'graup',(pi/6.d0*Sum(rho*NN*diam*diam*diam))/ (qhydro*rho_d)
+      ! computed NN/NN_model
+      if (isc==1) write(*,*) 'cloud',Sum(NN)/(qn*rho_d)
+      if (isc==2) write(*,*) 'rain',Sum(NN)/(qnhydro*rho_d)
+      if (isc==3) write(*,*) 'ice', Sum(NN)/(qnhydro*rho_d)
+      if (isc==4) write(*,*) 'snow',Sum(NN)/(qnhydro*rho_d)
+      if (isc==5) write(*,*) 'graup',Sum(NN)/(qnhydro*rho_d)
+      !
+      !pause
+    234 continue
+    !
+  return
+  end subroutine hydro_thompson38
+  !!
+  !!-- addedd by Cha
   !--------------------------------------------------------------------
   !
   subroutine hydro_milbrandt_yau(isc,snow_spherical,nd,dmin,dmax,temp,rho_d,rho_ds,qhydro,qnhydro,diam,rho,NN,fvel)
@@ -1395,8 +1923,8 @@
     Allocate(lambda(nd))
     !
     alphap1=1.d0+alpha
-    gamma_alphap1= dgamma(alphap1)
-    gfac=dgamma(alphap1+bm/nu) / gamma_alphap1
+    gamma_alphap1= gamma(alphap1)
+    gfac=gamma(alphap1+bm/nu) / gamma_alphap1
     !
     ibm=1.d0/bm
     lambda=(gfac * (am*qnhydro)/(qhydro))**ibm  ! 1/m
@@ -1547,8 +2075,8 @@
       endif
     enddo
     !---------------------------------------
-    gam_lam=dgamma((nu+1.d0)/mu)/dgamma((nu+2.d0)/mu);
-    gam_n0=1.d0/dgamma((nu+1.d0)/mu);
+    gam_lam=gamma((nu+1.d0)/mu)/gamma((nu+2.d0)/mu);
+    gam_n0=1.d0/gamma((nu+1.d0)/mu);
     !
     if(isc==1) then !cloud
       lambda = (gam_lam * Mm) ** (-mu) !lambda = (0.5d0 * Mm) ** (-mu)
@@ -1566,8 +2094,8 @@
       else
         mue = cmu1*DTANH((1.d0*cmu2*(Dm-cmu3))**cmu5) + cmu4
       endif
-        gamma_alphap1= dgamma(mue+1.d0)
-        gfac=dgamma(mue+4.d0) / gamma_alphap1
+        gamma_alphap1= gamma(mue+1.d0)
+        gfac=gamma(mue+4.d0) / gamma_alphap1
         ibm=1.d0/3.d0
         lambda = (am*(mue+3.d0)*(mue+2.d0)*(mue+1.d0)/Mm) ** ibm 
         N0 = qn * (lambda ** (mue + 1.d0)) / gamma_alphap1
@@ -1713,7 +2241,7 @@
     !--------------------------------------
     ! Mean particle mass, base diameter
     ibm=1.d0/bm
-    Dm = (qhydro*dgamma(nu)/qnhydro/am/dgamma(nu+bm)) ** ibm !m
+    Dm = (qhydro*gamma(nu)/qnhydro/am/gamma(nu+bm)) ** ibm !m
     !---------------------------------------
     ! particle density kg/m^3
     if((isc==1) .or. (isc==2) .or. (isc==7)) then
@@ -1741,7 +2269,7 @@
       enddo
     endif
     !---------------------------------------
-    gam_n0=1.d0/dgamma(nu)
+    gam_n0=1.d0/gamma(nu)
     !
     ! size distribution
     do ir=1,nd
@@ -1837,7 +2365,7 @@
     lambda=(pi*rhow_25C*Nc)/(6.d0*qhydro)*(mu+3.d0)*(mu+2.d0)*(mu+1.d0)
     lambda=lambda**oneOverThree
     !
-    N0=(Nc*lambda**(mu+1.d0))/(dgamma(mu+1.d0))
+    N0=(Nc*lambda**(mu+1.d0))/(gamma(mu+1.d0))
     !
     do ir=1,nd
       fvel(ir) = av*(diam(ir))**bv  ! m/s 
@@ -1900,7 +2428,7 @@
       ! first guess
       mu = 0.d0
       do ii=1,50
-        lambdae = initlamr*(dgamma(mu+4.d0)/(6.d0*dgamma(mu+1.d0)))**oneOverThree
+        lambdae = initlamr*(gamma(mu+4.d0)/(6.d0*gamma(mu+1.d0)))**oneOverThree
         ! new estimate for mu based on lambda
         ! set max lambda in formula for mu to 20 mm-1, according to Cao et al.
         dum = min(20.d0,lambdae*1.d-3)
@@ -1948,7 +2476,7 @@
     lambda = min((mu+1.d0)*1.d+5,lambda)
     lambda = max((mu+1.d0)*1250.d0,lambda)
     !
-    N0=(qnhydro*lambda**(mu+1.d0))/(dgamma(mu+1.d0))
+    N0=(qnhydro*lambda**(mu+1.d0))/(gamma(mu+1.d0))
     !
     do ir=1,nd
       amg(ir) = pi/6.d0*rhow*diam(ir)**3.d0      ! mass in kg
@@ -2106,14 +2634,14 @@
     cgp       = f1pr08
     !
     ! adapted N0 to real Q 
-    dum1 = lambda**(-ds1-mu-1.d0)*dgamma(mu+ds1+1.d0)*(1.d0-gammq(mu+ds1+1.d0,dcrit*lambda))
-    dum2 = lambda**(-ds-mu-1.d0)*dgamma(mu+ds+1.d0)*(gammq(mu+ds+1.d0,dcrit*lambda))
-    dumm = lambda**(-ds-mu-1.d0)*dgamma(mu+ds+1.d0)*(gammq(mu+ds+1.d0,dcrits*lambda))
+    dum1 = lambda**(-ds1-mu-1.d0)*gamma(mu+ds1+1.d0)*(1.d0-gammq(mu+ds1+1.d0,dcrit*lambda))
+    dum2 = lambda**(-ds-mu-1.d0)*gamma(mu+ds+1.d0)*(gammq(mu+ds+1.d0,dcrit*lambda))
+    dumm = lambda**(-ds-mu-1.d0)*gamma(mu+ds+1.d0)*(gammq(mu+ds+1.d0,dcrits*lambda))
     dum2 = dum2-dumm
-    dum3 = lambda**(-dg-mu-1.d0)*dgamma(mu+dg+1.d0)*(gammq(mu+dg+1.d0,dcrits*lambda))
-    dumm = lambda**(-dg-mu-1.d0)*dgamma(mu+dg+1.d0)*(gammq(mu+dg+1.d0,dcritr*lambda))
+    dum3 = lambda**(-dg-mu-1.d0)*gamma(mu+dg+1.d0)*(gammq(mu+dg+1.d0,dcrits*lambda))
+    dumm = lambda**(-dg-mu-1.d0)*gamma(mu+dg+1.d0)*(gammq(mu+dg+1.d0,dcritr*lambda))
     dum3 = dum3-dumm
-    dum4 = lambda**(-dsr-mu-1.d0)*dgamma(mu+dsr+1.d0)*(gammq(mu+dsr+1.d0,dcritr*lambda))
+    dum4 = lambda**(-dsr-mu-1.d0)*gamma(mu+dsr+1.d0)*(gammq(mu+dsr+1.d0,dcritr*lambda))
     !
     N0 = qhydro/(cs1*dum1+cs*dum2+cgp*dum3+csr*dum4)
     !
@@ -2720,11 +3248,19 @@
       Allocate(lden(nden))
       lden=lden_snow
     endif
+    IF ((conf%MP_PHYSICS==38)) THEN !added by Cha 2025/08/20
+    if ((isc==5) .or. (isc==6)) then ! graupel,hail
+      nden=n_lden_graup38
+      Allocate(lden(nden))
+      lden=lden_graup38
+    endif
+    ElSE
     if ((isc==5) .or. (isc==6)) then ! graupel,hail
       nden=n_lden_graup
       Allocate(lden(nden))
       lden=lden_graup
     endif
+    ENDIF
     !-------------------------------------------
     !
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -3025,11 +3561,19 @@
       Allocate(lden(nden))
       lden=lden_snow
     endif
+    IF ((conf%MP_PHYSICS==38)) THEN !added by Cha 2025/08/20
+    if ((isc==5) .or. (isc==6)) then ! graupel,hail
+      nden=n_lden_graup38
+      Allocate(lden(nden))
+      lden=lden_graup38
+    endif
+    ElSE
     if ((isc==5) .or. (isc==6)) then ! graupel,hail
       nden=n_lden_graup
       Allocate(lden(nden))
       lden=lden_graup
     endif
+    ENDIF
     !-------------------------------------------
     !
     ! for rho_const find the closest density from LUTs
@@ -4119,6 +4663,7 @@
       if (conf%MP_PHYSICS==9)  den_string='800' !changed by oue because mpl lut does not includes 840 2017/12/08
       if (conf%MP_PHYSICS==10) den_string='500'
       if (conf%MP_PHYSICS==8)  den_string='900' !Added by oue 2016/09/16: Note that Thopmson scheme assumes ice density of 890
+      if (conf%MP_PHYSICS==38)  den_string='890' !Added by Cha 2025/08/20: MP38, follow WRF code: https://github.com/wrf-model/WRF/blob/release-v4.7.1/phys/module_mp_thompson.F
       if (conf%MP_PHYSICS==30)  den_string='400' !Added by oue 2017/07/17:
       if (conf%MP_PHYSICS==40)  den_string='400' !Added by oue 2017/07/21:
       if (conf%MP_PHYSICS==50)  den_string='900' !Added by DW for P3 
@@ -4284,6 +4829,7 @@
       if (conf%MP_PHYSICS==9)  den_string='800' !changed by oue because mpl lut does not includes 840 2017/12/08
       if (conf%MP_PHYSICS==10) den_string='500'
       if (conf%MP_PHYSICS==8)  den_string='900' !Added by oue 2016/09/16: Note that Thopmson scheme assumes ice density of 890
+      if (conf%MP_PHYSICS==38)  den_string='890' !Added by Cha 2025/08/20: Thompson 38, following WRF MP module_mp_thompson
       if (conf%MP_PHYSICS==30)  den_string='400' !Added by oue 2017/07/17
       if (conf%MP_PHYSICS==40)  den_string='400' !Added by oue 2017/07/21
       if (conf%MP_PHYSICS==50)  den_string='900' !Added by DW for P3 
@@ -4418,7 +4964,6 @@
        -(dconjg(fb)*(fb-fa))*aa1 - (fb*(dconjg(fb)-dconjg(fa)))*aa2)
     w2=lam_mm*NN*1.d-9*dimag(fb*dconjg(fb) + ((fb-fa)*dconjg(fb-fa))*aa3 &
        - (dconjg(fb)*(fb-fa))*aa1- (fb*(dconjg(fb)-dconjg(fa)))*aa2)
-     
     diff_back_phase=datan2(Sum(w2),Sum(w1))
     diff_back_phase=diff_back_phase*180.d0/pi ! deg
     !
@@ -4708,6 +5253,22 @@
         Allocate(lden(nden))
         lden=lden_parice
       endif 
+    else if(conf%MP_PHYSICS==38) then !Added by Cha 2025/08/20
+      if (isc==3) then ! ice
+        nden=n_lden_ice
+        Allocate(lden(nden))
+        lden=lden_ice
+      endif
+      if (isc==4) then ! snow, aggregates
+        nden=n_lden_snow
+        Allocate(lden(nden))
+        lden=lden_snow
+      endif
+      if ((isc==5) .or. (isc==6)) then ! graupel,hail
+        nden=n_lden_graup38
+        Allocate(lden(nden))
+        lden=lden_graup38
+      endif
     ELSE  !by oue PRELOAD P3 
       if (isc==3) then ! ice
         nden=n_lden_ice
@@ -6262,6 +6823,112 @@
   return
   end subroutine  get_hydro80_vars
   !
+   !!! Added by Ting-Yu Cha, 2025, October
+  subroutine get_hydro38_vars(conf,env,mp38,hydro38)
+  Use wrf_var_mod
+  Use crsim_mod
+  Implicit None
+  !
+  Type(conf_var),Intent(In)                  :: conf
+  Type(env_var),Intent(In)                   :: env
+  Type(wrf_var_mp38),Intent(In)              :: mp38
+  Type(hydro38_var),Intent(InOut)            :: hydro38
+  !
+  Integer                                    :: ix1,ix2, iy1,iy2,iz1,iz2,it
+  Integer                                    :: morrID
+  real*8                                     :: thr
+  Integer                                    :: iz,ih
+    !
+    ! default - the whole scene and it==1
+    ix1=1 ; ix2=mp38%nx
+    iy1=1 ; iy2=mp38%ny
+    iz1=1 ; iz2=mp38%nz
+    it = 1
+    !
+    ! reconstruct scene from configuration parameters (defined by user)
+    If (hydro38%nx/=mp38%nx) Then
+      ix1=conf%ix_start ; ix2=conf%ix_end
+    EndIf
+    If (hydro38%ny/=mp38%ny) Then
+      iy1=conf%iy_start ; iy2=conf%iy_end
+    EndIf
+    !
+    If (hydro38%nz/=mp38%nz) Then
+      iz1=conf%iz_start ; iz2=conf%iz_end
+    EndIf
+    !
+    If (mp38%nt>1) it=conf%it
+    !
+    hydro38%qhydro(:,:,:,1)=mp38%qcloud(ix1:ix2,iy1:iy2,iz1:iz2,it)
+    hydro38%qhydro(:,:,:,2)=mp38%qrain(ix1:ix2,iy1:iy2,iz1:iz2,it)
+    hydro38%qhydro(:,:,:,3)=mp38%qice(ix1:ix2,iy1:iy2,iz1:iz2,it)
+    hydro38%qhydro(:,:,:,4)=mp38%qsnow(ix1:ix2,iy1:iy2,iz1:iz2,it)
+    hydro38%qhydro(:,:,:,5)=mp38%qgraup(ix1:ix2,iy1:iy2,iz1:iz2,it)
+    ! ! change unit [/m^3] -> [/kg]
+    hydro38%qnhydro(:,:,:,1)=mp38%qncloud(ix1:ix2,iy1:iy2,iz1:iz2,it)/env%rho_d(:,:,:)
+    hydro38%qnhydro(:,:,:,2)=mp38%qnrain(ix1:ix2,iy1:iy2,iz1:iz2,it)/env%rho_d(:,:,:)
+    hydro38%qnhydro(:,:,:,3)=mp38%qnice(ix1:ix2,iy1:iy2,iz1:iz2,it)/env%rho_d(:,:,:)
+    ! ! for graupel
+    hydro38%qvgraup(:,:,:)=mp38%qvgraup(ix1:ix2,iy1:iy2,iz1:iz2,it)
+
+    write(*,*) 'Info: removing values below the given threshold'
+    thr=1.d-50
+    morrID=0
+    if (MaxVal(hydro38%qnhydro(:,:,:,1))<0.d0) morrID=1
+
+   do iz=1,hydro38%nz
+      !
+      thr=conf%thr_mix_ratio(1)
+      IF (morrID==0) then
+        where(hydro38%qhydro (:,:,iz,1) < thr)
+          hydro38%qhydro (:,:,iz,1) = 0.d0
+          hydro38%qnhydro(:,:,iz,1) = 0.d0
+        endwhere
+        where(hydro38%qnhydro(:,:,iz,1) <= 0.d0)
+          hydro38%qhydro (:,:,iz,1) =0.d0
+          hydro38%qnhydro(:,:,iz,1) =0.d0
+        endwhere
+      ELSE
+        where(hydro38%qhydro (:,:,iz,1) < thr)
+          hydro38%qhydro (:,:,iz,1) = 0.d0
+        endwhere
+      ENDIF
+      !!----------------------------------
+      thr=conf%thr_mix_ratio(2)
+      where(hydro38%qhydro (:,:,iz,2) < thr)
+        hydro38%qhydro (:,:,iz,2) = 0.d0
+        hydro38%qnhydro(:,:,iz,2) = 0.d0
+      endwhere
+      where(hydro38%qnhydro(:,:,iz,2) <= 0.d0)
+        hydro38%qhydro (:,:,iz,2) =0.d0
+        hydro38%qnhydro(:,:,iz,2) =0.d0
+      endwhere
+      !!----------------------------------
+      thr=conf%thr_mix_ratio(3)
+      where(hydro38%qhydro (:,:,iz,3) < thr)
+        hydro38%qhydro (:,:,iz,3) = 0.d0
+        hydro38%qnhydro(:,:,iz,3) = 0.d0
+      endwhere
+      where(hydro38%qnhydro(:,:,iz,3) <= 0.d0)
+        hydro38%qhydro (:,:,iz,3) = 0.d0
+        hydro38%qnhydro(:,:,iz,3) = 0.d0
+      endwhere
+      !!----------------------------------
+      thr=conf%thr_mix_ratio(4)
+      where(hydro38%qhydro (:,:,iz,4) < thr)
+        hydro38%qhydro (:,:,iz,4) = 0.d0
+      endwhere
+      !!----------------------------------
+      thr=conf%thr_mix_ratio(5)
+      where(hydro38%qhydro (:,:,iz,5) < thr)
+        hydro38%qhydro (:,:,iz,5) = 0.d0
+        hydro38%qvgraup (:,:,iz) = 0.d0
+      endwhere
+    enddo ! iz
+    !
+  return
+  end subroutine  get_hydro38_vars
+!---------------------------------------------
   !
   subroutine determine_elevation_and_range(x,y,z,ixc,iyc,zc,dxc,dyc,elev,rr)
   use crsim_mod
@@ -7162,7 +7829,7 @@
   Integer           :: n
   Real*8            :: ap,del,gln,summ
     !
-    gln = dlog(dgamma(a))
+    gln = dlog(gamma(a))
     !
     if (x.le.0.d0) then
       gamser = 0.d0
@@ -7192,7 +7859,7 @@
   integer           :: i
   real*8            :: an,b,c,d,del,h,gln
     !
-    gln=dlog(dgamma(a))
+    gln=dlog(gamma(a))
     b=x+1.d0-a
     c=1.d0/fpmin
     d=1.d0/b

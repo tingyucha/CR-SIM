@@ -356,6 +356,8 @@ endif
 !- Massages added by oue April 2018
      if (str%MP_PHYSICS==8) then
 write(*,*) 'Selected microphysics: 8 (WRF Thompson bulk moment)'
+else if (str%MP_PHYSICS==38) then
+write(*,*) 'Selected microphysics: 38 (WRF Thompson 2 moment (MP38))'
 else if (str%MP_PHYSICS==9) then
 write(*,*) 'Selected microphysics: 9 (WRF Milbranndt-Yau)'
 if(str%snow_spherical==0) write(*,*) ' Non spherical snow'

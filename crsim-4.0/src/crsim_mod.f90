@@ -293,7 +293,20 @@ real*8, Dimension(:,:,:,:),Allocatable    :: qhydro  ! hydrometeor mixing ratio 
 real*8, Dimension(:,:,:,:),Allocatable    :: qnhydro ! hydro number concentrat. [1/kg] 
 !
 End Type hydro_var
-!!-------------------------------
+!!-------------------------------! Added by Cha 2025/08/20 MP38
+Type hydro38_var 
+!
+integer                 :: nx
+integer                 :: ny
+integer                 :: nz
+integer                 :: nht
+!
+real*8, Dimension(:,:,:,:),Allocatable    :: qhydro  ! hydrometeor mixing ratio [kg/kg] 1-cloud, 2-rain, 3-ice, 4-snow 5-graupel
+real*8, Dimension(:,:,:,:),Allocatable    :: qnhydro ! hydro number concentrat. [1/kg] 
+real*8, Dimension(:,:,:,:),Allocatable    :: qvgraup ! Graupel  Particle Volume [m3/kg] 
+!
+End Type hydro38_var
+!!--------------------------------
 ! Type hydro50_var is added by DW 2017/10/30 for P3
 Type hydro50_var
 !
@@ -635,6 +648,24 @@ Allocate(str%qnhydro(nx,ny,nz,nht))
 return
 end subroutine allocate_hydro_var
 !!
+!! Added by Cha 2025/08/20
+subroutine allocate_hydro38_var(str)
+Implicit None
+Type(hydro38_var),Intent(InOut)        :: str
+Integer                              :: nx,ny,nz,nht
+!
+nx=str%nx
+ny=str%ny
+nz=str%nz
+nht=str%nht
+!
+Allocate(str%qhydro(nx,ny,nz,nht))
+Allocate(str%qnhydro(nx,ny,nz,nht))
+Allocate(str%qvgraup(nx,ny,nz,nht))
+!
+return
+end subroutine allocate_hydro38_var
+!!
 subroutine initialize_hydro_var(str)
 Use phys_param_mod, ONLY: zero
 Implicit None
@@ -647,6 +678,21 @@ str%qnhydro=zero
 return
 end subroutine initialize_hydro_var
 !!
+!! Added by Cha 2025/08/20
+subroutine initialize_hydro38_var(str)
+Use phys_param_mod, ONLY: zero
+Implicit None
+Type(hydro38_var),Intent(InOut)        :: str
+!
+!
+str%qhydro=zero
+str%qnhydro=zero
+str%qvgraup=zero
+!
+return
+end subroutine initialize_hydro38_var
+!!
+
 subroutine deallocate_hydro_var(str)
 Implicit None
 Type(hydro_var),Intent(InOut)        :: str
@@ -661,6 +707,22 @@ str%nht=0
 !
 return
 end subroutine deallocate_hydro_var
+!!
+subroutine deallocate_hydro38_var(str)
+Implicit None
+Type(hydro38_var),Intent(InOut)        :: str
+!
+Deallocate(str%qhydro)
+Deallocate(str%qnhydro)
+Deallocate(str%qvgraup)
+!
+str%nx=0
+str%ny=0
+str%nz=0
+str%nht=0
+!
+return
+end subroutine deallocate_hydro38_var
 !!
 !subroutine allocate_hydro50_var(str) is added by DW 2017/10/30 for P3
 subroutine allocate_hydro50_var(str)
